@@ -78,11 +78,11 @@ export async function checkDatabaseHealth() {
 // Authentication
 // --------------------------------------------------
 
-export async function registerUser(name, email, password) {
+export async function registerUser(name, email, password, role = "student") {
   const response = await fetch(`${API_BASE_URL}/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, email, password }),
+    body: JSON.stringify({ name, email, password, role }),
   });
   return handleResponse(response);
 }
