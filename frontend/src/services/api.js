@@ -1,6 +1,29 @@
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
 
 // --------------------------------------------------
+// Safe Fetch wrapper with diagnostic error reporting
+// --------------------------------------------------
+const _nativeFetch = window.fetch.bind(window);
+
+async function fetch(url, options) {
+  try {
+    return await _nativeFetch(url, options);
+  } catch (err) {
+    if (err.message === "Failed to fetch" || err.name === "TypeError") {
+      if (typeof window !== "undefined" && window.location.protocol === "https:" && typeof API_BASE_URL === "string" && API_BASE_URL.startsWith("http://")) {
+        throw new Error(
+          `Mixed Content Error: This HTTPS site cannot connect to an insecure backend (${API_BASE_URL}). Please deploy your backend with HTTPS and set VITE_API_URL in your hosting settings.`
+        );
+      }
+      throw new Error(
+        `Unable to reach backend server at ${API_BASE_URL}. Please ensure the backend is running and reachable.`
+      );
+    }
+    throw err;
+  }
+}
+
+// --------------------------------------------------
 // Helper: get stored auth token
 // --------------------------------------------------
 function getToken() {
