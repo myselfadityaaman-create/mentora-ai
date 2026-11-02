@@ -8,7 +8,6 @@ import {
   addStudentToClass,
   removeStudentFromClass,
   createAssignment,
-  getClassAssignments,
   getAssignmentDetails,
   deleteAssignment,
   gradeSubmission,
@@ -30,7 +29,6 @@ export default function TeacherPortal() {
   const [selectedClassData, setSelectedClassData] = useState(null);
   const [classSubTab, setClassSubTab] = useState("assignments"); // "assignments" | "roster" | "analytics"
   const [classAnalytics, setClassAnalytics] = useState(null);
-  const [loadingDetail, setLoadingDetail] = useState(false);
 
   // Modals & Forms
   const [showCreateClassModal, setShowCreateClassModal] = useState(false);
@@ -297,6 +295,12 @@ export default function TeacherPortal() {
             </button>
           </div>
         </div>
+
+        {error && (
+          <div className="my-4 rounded-xl border border-red-500/30 bg-red-500/10 p-3.5 text-xs text-red-300">
+            {error}
+          </div>
+        )}
 
         {/* Global Statistics Banner */}
         {stats && (

@@ -90,6 +90,12 @@ export default function ReportsCertificates() {
           </div>
         </div>
 
+        {error && (
+          <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3.5 text-xs text-red-300">
+            {error}
+          </div>
+        )}
+
         {/* SECTION 1: COMPREHENSIVE PERFORMANCE REPORT */}
         <section className="space-y-4">
           <div className="flex items-center justify-between">

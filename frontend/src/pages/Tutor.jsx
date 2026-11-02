@@ -11,7 +11,6 @@ import {
   listDocuments,
 } from "../services/api";
 import Navbar from "../components/Navbar";
-import Footer from "../components/Footer";
 import LoadingSpinner from "../components/LoadingSpinner";
 
 const LANGUAGES = [
@@ -52,11 +51,31 @@ const SUBJECTS = [
   "Literature",
 ];
 
-const SUGGESTED_PROMPTS = [
-  { text: "Explain recursion in programming with a simple analogy", subject: "Computer Science" },
-  { text: "What is the difference between speed and velocity?", subject: "Physics" },
-  { text: "How does photosynthesis produce oxygen?", subject: "Biology" },
-  { text: "Explain Bayes' theorem with a real-life medical test example", subject: "Mathematics" },
+const QUICK_STARTERS = [
+  {
+    title: "Explain recursion",
+    subtitle: "With a simple intuitive real-life analogy",
+    subject: "Computer Science",
+    icon: "💻",
+  },
+  {
+    title: "Speed vs Velocity",
+    subtitle: "What is the key scientific difference?",
+    subject: "Physics",
+    icon: "⚡",
+  },
+  {
+    title: "Photosynthesis process",
+    subtitle: "How light reactions convert into chemical energy",
+    subject: "Biology",
+    icon: "🧬",
+  },
+  {
+    title: "Bayes' Theorem",
+    subtitle: "Step-by-step medical test diagnosis problem",
+    subject: "Mathematics",
+    icon: "📐",
+  },
 ];
 
 function Tutor() {
@@ -77,13 +96,17 @@ function Tutor() {
   const [loadingConvo, setLoadingConvo] = useState(false);
   const [error, setError] = useState(null);
 
-  // Voice Interaction Mode state (Phase 8)
+  // Layout & UI state
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [searchConvo, setSearchConvo] = useState("");
+  const [copiedId, setCopiedId] = useState(null);
+
+  // Voice Interaction state
   const [isVoiceMode, setIsVoiceMode] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [currentPlayingMsgId, setCurrentPlayingMsgId] = useState(null);
-  const [voiceError, setVoiceError] = useState(null);
   const recognitionRef = useRef(null);
 
   // AI Configuration Modal state
@@ -96,6 +119,7 @@ function Tutor() {
   const [keyModalSuccess, setKeyModalSuccess] = useState("");
 
   const messagesEndRef = useRef(null);
+  const textareaRef = useRef(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -105,7 +129,28 @@ function Tutor() {
     scrollToBottom();
   }, [messages, loading]);
 
-  // Clean up audio & recognition on unmount
+  // Auto-expand textarea height dynamically up to 5-6 lines (~160px), then scroll
+  const adjustTextareaHeight = (element) => {
+    if (!element) return;
+    element.style.height = "auto";
+    const scrollHeight = element.scrollHeight;
+    const maxHeight = 160; // 5-6 lines limit
+    if (scrollHeight > maxHeight) {
+      element.style.height = `${maxHeight}px`;
+      element.style.overflowY = "auto";
+    } else {
+      element.style.height = `${Math.max(28, scrollHeight)}px`;
+      element.style.overflowY = "hidden";
+    }
+  };
+
+  useEffect(() => {
+    if (textareaRef.current) {
+      adjustTextareaHeight(textareaRef.current);
+    }
+  }, [inputMessage]);
+
+  // Clean up audio on unmount
   useEffect(() => {
     return () => {
       if (typeof window !== "undefined" && "speechSynthesis" in window) {
@@ -142,26 +187,26 @@ function Tutor() {
         const res = await listConversations();
         setConversations(res.conversations || []);
       } catch {
-        // Conversation history load error
+        // Ignore
       }
     }
     fetchConversations();
   }, []);
 
-  // Load user documents for RAG grounding
+  // Load user documents for RAG
   useEffect(() => {
     async function fetchUserDocs() {
       try {
         const res = await listDocuments();
         setDocuments(res.documents || []);
       } catch {
-        // Document fetch error
+        // Ignore
       }
     }
     fetchUserDocs();
   }, []);
 
-  // Load active conversation when changed
+  // Load active conversation
   useEffect(() => {
     async function loadActiveConvo() {
       if (!currentConvoId) {
@@ -175,7 +220,7 @@ function Tutor() {
         setMessages(data.messages || []);
         if (data.subject) setSelectedSubject(data.subject);
       } catch {
-        setError("Failed to load conversation. It may have been deleted.");
+        setError("Failed to load conversation.");
         setCurrentConvoId(null);
       } finally {
         setLoadingConvo(false);
@@ -189,6 +234,9 @@ function Tutor() {
     setMessages([]);
     setSearchParams({});
     setError(null);
+    if (textareaRef.current) {
+      textareaRef.current.focus();
+    }
   };
 
   const handleSelectConversation = (id) => {
@@ -209,8 +257,16 @@ function Tutor() {
     }
   };
 
+  const handleCopyText = (id, text) => {
+    navigator.clipboard.writeText(text);
+    setCopiedId(id);
+    setTimeout(() => {
+      setCopiedId(null);
+    }, 2000);
+  };
+
   // --------------------------------------------------
-  // Voice Helper Functions (TTS & STT - Phase 8)
+  // Voice Helpers (TTS & STT)
   // --------------------------------------------------
 
   const prepareTextForSpeech = (markdown) => {
@@ -339,13 +395,11 @@ function Tutor() {
       recognition.onerror = (event) => {
         setIsRecording(false);
         if (event.error === "not-allowed") {
-          setVoiceError("Microphone permission was denied. Please allow microphone access in your browser settings to use voice input.");
+          setVoiceError("Microphone permission denied.");
         } else if (event.error === "no-speech") {
-          setVoiceError("No speech was detected. Please try again or type your question.");
-        } else if (event.error === "audio-capture") {
-          setVoiceError("No microphone was detected on this device. Please check your audio hardware.");
+          setVoiceError("No speech detected.");
         } else {
-          setVoiceError(`Voice input error: ${event.error}. You can continue by typing.`);
+          setVoiceError(`Voice error: ${event.error}`);
         }
       };
 
@@ -355,9 +409,9 @@ function Tutor() {
 
       recognitionRef.current = recognition;
       recognition.start();
-    } catch (err) {
+    } catch {
       setIsRecording(false);
-      setVoiceError("Could not start microphone: " + (err.message || "Unknown error"));
+      setError("Could not start microphone. Please check browser permissions.");
     }
   };
 
@@ -366,7 +420,7 @@ function Tutor() {
       try {
         recognitionRef.current.stop();
       } catch {
-        // Recognition already stopped
+        // Ignore
       }
     }
     setIsRecording(false);
@@ -381,7 +435,6 @@ function Tutor() {
       handleStopRecording();
     }
 
-    // Optimistically append user message
     const userMsg = {
       id: "temp-" + Date.now(),
       role: "user",
@@ -392,6 +445,10 @@ function Tutor() {
 
     setMessages((prev) => [...prev, userMsg]);
     setInputMessage("");
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "28px";
+      textareaRef.current.style.overflowY = "hidden";
+    }
     setLoading(true);
     setError(null);
 
@@ -405,19 +462,16 @@ function Tutor() {
         inputMode
       );
 
-      // Append assistant response with unique ID for audio playback
       const assistantMsg = {
         ...res.message,
         id: res.message.id || "msg-" + Date.now(),
       };
       setMessages((prev) => [...prev, assistantMsg]);
 
-      // If Voice Mode is ON, immediately read AI response aloud
       if (isVoiceMode) {
         handlePlayTTS(assistantMsg.id, assistantMsg.content);
       }
 
-      // If new conversation was created, record it
       if (!currentConvoId && res.conversation_id) {
         setCurrentConvoId(res.conversation_id);
         setSearchParams({ c: res.conversation_id });
@@ -451,22 +505,26 @@ function Tutor() {
 
     try {
       const res = await saveAIKey(apiKeyInput.trim(), selectedModel);
-      setKeyModalSuccess("Key verified & saved! AI Tutor is now unlocked.");
+      setKeyModalSuccess("Key saved! Gemini is active.");
       setAiStatus({ configured: true, model: res.model });
       setTimeout(() => {
         setShowKeyModal(false);
         setKeyModalSuccess("");
         setApiKeyInput("");
-      }, 1500);
+      }, 1200);
     } catch (err) {
-      setKeyModalError(err.message || "Failed to verify API key with Google Gemini.");
+      setKeyModalError(err.message || "Failed to verify key with Google Gemini.");
     } finally {
       setSavingKey(false);
     }
   };
 
-  // Safe markdown-like formatter for code blocks, bold text, lists, and linebreaks
-  const renderFormattedText = (text) => {
+  const filteredConversations = conversations.filter((c) =>
+    (c.title || "Untitled Chat").toLowerCase().includes(searchConvo.toLowerCase())
+  );
+
+  // Helper to render Markdown cleanly like ChatGPT
+  const renderFormattedText = (text, messageId) => {
     if (!text) return null;
     const parts = text.split(/(```[\s\S]*?```)/g);
 
@@ -475,59 +533,63 @@ function Tutor() {
         const lines = part.slice(3, -3).trim().split("\n");
         const lang = lines[0].match(/^[a-zA-Z0-9_-]+$/) ? lines[0] : "";
         const code = lang ? lines.slice(1).join("\n") : lines.join("\n");
+        const codeBlockId = `code-${messageId}-${index}`;
 
         return (
-          <div key={index} className="my-3 overflow-hidden rounded-xl border border-slate-700 bg-slate-950 font-mono text-xs">
-            {lang && (
-              <div className="bg-slate-800 px-4 py-1.5 text-slate-400 font-semibold uppercase tracking-wider text-[10px]">
-                {lang}
-              </div>
-            )}
-            <pre className="p-4 overflow-x-auto text-emerald-300">
+          <div key={index} className="my-3 overflow-hidden rounded-xl border border-white/10 bg-[#0d1117] font-mono text-xs">
+            <div className="flex items-center justify-between border-b border-white/5 bg-[#161b22] px-4 py-2 text-slate-400">
+              <span className="text-[11px] font-semibold text-slate-300 uppercase tracking-wider">
+                {lang || "Code"}
+              </span>
+              <button
+                type="button"
+                onClick={() => handleCopyText(codeBlockId, code)}
+                className="flex items-center gap-1.5 rounded px-2 py-1 text-[11px] text-slate-400 hover:text-white transition cursor-pointer"
+              >
+                {copiedId === codeBlockId ? (
+                  <span className="text-emerald-400 font-medium">Copied!</span>
+                ) : (
+                  <span>Copy</span>
+                )}
+              </button>
+            </div>
+            <pre className="p-4 overflow-x-auto text-slate-200 leading-relaxed font-mono">
               <code>{code}</code>
             </pre>
           </div>
         );
       }
 
-      // Check if this part contains setup instructions
-      const isSetupWarning = part.includes("AI is not configured") || part.includes("API Key Not Configured");
-
-      // Split into lines for list and bold parsing
       const lines = part.split("\n");
 
       return (
-        <div key={index} className="space-y-1.5">
+        <div key={index} className="space-y-2">
           {lines.map((line, lIdx) => {
             const trimmed = line.trim();
             if (!trimmed) return <div key={lIdx} className="h-1" />;
 
-            // Headings
             if (trimmed.startsWith("### ")) {
               return (
-                <h3 key={lIdx} className="text-base font-bold text-blue-300 mt-2 mb-1">
+                <h3 key={lIdx} className="text-base font-semibold text-white mt-3 mb-1">
                   {trimmed.replace(/^###\s+/, "")}
                 </h3>
               );
             }
             if (trimmed.startsWith("#### ")) {
               return (
-                <h4 key={lIdx} className="text-sm font-semibold text-slate-200 mt-1.5 mb-1">
+                <h4 key={lIdx} className="text-sm font-semibold text-slate-200 mt-2 mb-1">
                   {trimmed.replace(/^####\s+/, "")}
                 </h4>
               );
             }
 
-            // Horizontal rule
             if (trimmed === "---") {
-              return <hr key={lIdx} className="border-slate-700 my-2" />;
+              return <hr key={lIdx} className="border-white/10 my-3" />;
             }
 
-            // Bullet points
             const isBullet = trimmed.startsWith("- ") || trimmed.startsWith("* ");
             const isNumbered = /^\d+\.\s/.test(trimmed);
 
-            // Parse **bold** and `code`
             const content = trimmed.replace(/^[-*]\s+|\d+\.\s+/, "");
             const parsedContent = content.split(/(\*\*.*?\*\*|`.*?`)/g).map((sub, sIdx) => {
               if (sub.startsWith("**") && sub.endsWith("**")) {
@@ -535,7 +597,7 @@ function Tutor() {
               }
               if (sub.startsWith("`") && sub.endsWith("`")) {
                 return (
-                  <code key={sIdx} className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-xs text-blue-300">
+                  <code key={sIdx} className="rounded bg-white/10 px-1.5 py-0.5 font-mono text-xs text-sky-300">
                     {sub.slice(1, -1)}
                   </code>
                 );
@@ -545,9 +607,9 @@ function Tutor() {
 
             if (isBullet) {
               return (
-                <div key={lIdx} className="flex items-start gap-2 pl-2">
-                  <span className="text-blue-400 mt-1">•</span>
-                  <span className="leading-relaxed">{parsedContent}</span>
+                <div key={lIdx} className="flex items-start gap-2.5 pl-2">
+                  <span className="text-slate-400 mt-1 text-sm">•</span>
+                  <span className="leading-relaxed text-slate-200">{parsedContent}</span>
                 </div>
               );
             }
@@ -556,167 +618,190 @@ function Tutor() {
               const numMatch = trimmed.match(/^(\d+\.)\s/);
               const num = numMatch ? numMatch[1] : "1.";
               return (
-                <div key={lIdx} className="flex items-start gap-2 pl-2">
-                  <span className="text-blue-400 font-semibold text-xs">{num}</span>
-                  <span className="leading-relaxed">{parsedContent}</span>
+                <div key={lIdx} className="flex items-start gap-2.5 pl-2">
+                  <span className="text-slate-400 font-medium text-xs mt-0.5">{num}</span>
+                  <span className="leading-relaxed text-slate-200">{parsedContent}</span>
                 </div>
               );
             }
 
             return (
-              <p key={lIdx} className="leading-relaxed">
+              <p key={lIdx} className="leading-relaxed text-slate-200">
                 {parsedContent}
               </p>
             );
           })}
-
-          {/* If setup notice is detected, render quick action button */}
-          {isSetupWarning && !aiStatus.configured && (
-            <div className="pt-2">
-              <button
-                type="button"
-                onClick={() => setShowKeyModal(true)}
-                className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-violet-600 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-blue-600/30 hover:brightness-110 transition"
-              >
-                <span>🔑</span> Connect Google Gemini API Key Now
-              </button>
-            </div>
-          )}
         </div>
       );
     });
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white flex flex-col justify-between">
+    <div className="h-screen w-screen flex flex-col bg-[#0b0f17] text-white overflow-hidden font-sans">
       <Navbar />
 
-      <div className="mx-auto flex w-full max-w-7xl flex-1 px-4 py-6 gap-6 overflow-hidden">
-        {/* Sidebar: Conversation history */}
-        <aside className="hidden md:flex w-72 flex-col rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
-          <button
-            onClick={handleStartNewConversation}
-            className="flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-600/20 transition hover:bg-blue-500"
-          >
-            <span>+</span> New Conversation
-          </button>
+      {/* Main Container */}
+      <div className="flex-1 flex overflow-hidden relative">
+        {/* ChatGPT / Gemini Clean Collapsible Sidebar */}
+        <aside
+          className={`${
+            sidebarOpen ? "w-64" : "w-0 -translate-x-full md:translate-x-0 md:w-0"
+          } transition-all duration-200 ease-in-out shrink-0 border-r border-white/5 bg-[#0e131f] flex flex-col overflow-hidden z-20`}
+        >
+          {/* Top: Minimal New Chat */}
+          <div className="p-3 border-b border-white/5 space-y-2">
+            <button
+              onClick={handleStartNewConversation}
+              className="w-full flex items-center justify-between rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 px-3 py-2 text-xs font-medium text-slate-200 transition cursor-pointer"
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-base leading-none">＋</span>
+                <span>New chat</span>
+              </div>
+              <span className="text-[10px] text-slate-500 font-mono">⌘K</span>
+            </button>
 
-          <h3 className="mt-5 mb-2 px-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
-            Past Conversations
-          </h3>
+            {/* Quick Search */}
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Search history..."
+                value={searchConvo}
+                onChange={(e) => setSearchConvo(e.target.value)}
+                className="w-full rounded-lg border border-white/5 bg-black/20 px-2.5 py-1.5 pl-8 text-xs text-slate-300 placeholder-slate-500 outline-none focus:border-white/20 transition"
+              />
+              <svg className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+            </div>
+          </div>
 
-          <div className="flex-1 overflow-y-auto space-y-1 pr-1">
-            {conversations.length === 0 ? (
-              <p className="px-2 py-4 text-xs text-slate-500 text-center">
-                No past conversations yet.
-              </p>
+          {/* Past Chats List */}
+          <div className="flex-1 overflow-y-auto p-2 space-y-0.5 select-text">
+            {filteredConversations.length === 0 ? (
+              <div className="py-16 text-center text-xs text-slate-500">
+                {searchConvo ? "No matching chats" : "No recent chats"}
+              </div>
             ) : (
-              conversations.map((conv) => (
-                <div
-                  key={conv.id}
-                  onClick={() => handleSelectConversation(conv.id)}
-                  className={`group flex items-center justify-between rounded-xl px-3 py-2.5 text-sm cursor-pointer transition ${
-                    currentConvoId === conv.id
-                      ? "bg-blue-600/20 text-blue-300 border border-blue-500/30 font-medium"
-                      : "text-slate-300 hover:bg-slate-800/80"
-                  }`}
-                >
-                  <span className="truncate pr-2">{conv.title || "Untitled Chat"}</span>
-                  <button
-                    onClick={(e) => handleDeleteConversation(e, conv.id)}
-                    className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 p-1 text-xs"
-                    title="Delete conversation"
+              filteredConversations.map((conv) => {
+                const isActive = currentConvoId === conv.id;
+                return (
+                  <div
+                    key={conv.id}
+                    onClick={() => handleSelectConversation(conv.id)}
+                    className={`group flex items-center justify-between rounded-lg px-2.5 py-2 text-xs cursor-pointer transition ${
+                      isActive
+                        ? "bg-white/10 text-white font-medium"
+                        : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
+                    }`}
                   >
-                    ✕
-                  </button>
-                </div>
-              ))
+                    <span className="truncate pr-2">{conv.title || "Untitled Chat"}</span>
+                    <button
+                      onClick={(e) => handleDeleteConversation(e, conv.id)}
+                      className="opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-red-400 transition"
+                      title="Delete"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                );
+              })
             )}
+          </div>
+
+          {/* Sidebar Footer */}
+          <div className="p-3 border-t border-white/5 text-[11px] text-slate-400 flex items-center justify-between">
+            <span className="truncate">{user?.email || "Student Account"}</span>
+            <span className="text-[10px] text-emerald-400">● Live</span>
           </div>
         </aside>
 
-        {/* Main Chat Panel */}
-        <section className="flex flex-1 flex-col rounded-2xl border border-slate-800 bg-slate-900/40 p-4 sm:p-6 overflow-hidden">
-          {/* Controls Bar: Language + Subject + AI Key Status */}
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
-            <div className="flex items-center gap-3">
-              <span className="text-xl">🤖</span>
-              <div>
-                <h1 className="text-lg font-bold text-slate-100">Mentora AI Tutor</h1>
-                <p className="text-xs text-slate-400">Multilingual generative explanations</p>
-              </div>
+        {/* Main Chat Workspace */}
+        <main className="flex-1 flex flex-col h-full overflow-hidden bg-[#0b0f17] relative">
+          {/* Top Bar: Minimalist ChatGPT/Gemini Header */}
+          <header className="h-13 shrink-0 border-b border-white/5 bg-[#0e131f]/60 backdrop-blur-md px-4 flex items-center justify-between gap-3 z-10">
+            {/* Left: Sidebar toggle + Model Name */}
+            <div className="flex items-center gap-2.5">
+              <button
+                type="button"
+                onClick={() => setSidebarOpen((prev) => !prev)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer"
+                title="Toggle sidebar"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
+                </svg>
+              </button>
+
+              {/* Minimalist Model Pill */}
+              <button
+                type="button"
+                onClick={() => setShowKeyModal(true)}
+                className="flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium text-slate-200 hover:bg-white/5 transition cursor-pointer"
+              >
+                <span className="text-sky-400">✨</span>
+                <span>{aiStatus.configured ? (aiStatus.model || "Gemini 3.8 Flash") : "Connect Gemini"}</span>
+                <span className="text-[10px] text-slate-500">▾</span>
+              </button>
             </div>
 
-            <div className="flex flex-wrap items-center gap-3">
-              {/* Subject selector */}
-              <div className="flex items-center gap-1.5 text-xs text-slate-400">
-                <span>Subject:</span>
+            {/* Right: Clean, Unobtrusive Controls */}
+            <div className="flex items-center gap-2">
+              {/* Subject */}
+              <div className="relative">
                 <select
                   value={selectedSubject}
                   onChange={(e) => setSelectedSubject(e.target.value)}
-                  className="rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-200 outline-none focus:border-blue-500"
+                  className="rounded-lg border border-white/10 bg-white/5 pl-2.5 pr-6 py-1 text-xs text-slate-300 outline-none hover:bg-white/10 transition cursor-pointer appearance-none"
                 >
                   {SUBJECTS.map((s) => (
-                    <option key={s} value={s}>
+                    <option key={s} value={s} className="bg-slate-900 text-white">
                       {s}
                     </option>
                   ))}
                 </select>
+                <span className="absolute right-2 top-1.5 text-[9px] text-slate-500 pointer-events-none">▼</span>
               </div>
 
-              {/* Language selector */}
-              <div className="flex items-center gap-1.5 text-xs text-slate-400">
-                <span>Language:</span>
+              {/* Language */}
+              <div className="relative">
                 <select
                   value={selectedLanguage}
                   onChange={(e) => setSelectedLanguage(e.target.value)}
-                  className="rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-200 outline-none focus:border-blue-500"
+                  className="rounded-lg border border-white/10 bg-white/5 pl-2.5 pr-6 py-1 text-xs text-slate-300 outline-none hover:bg-white/10 transition cursor-pointer appearance-none"
                 >
                   {LANGUAGES.map((lang) => (
-                    <option key={lang} value={lang}>
+                    <option key={lang} value={lang} className="bg-slate-900 text-white">
                       {lang}
                     </option>
                   ))}
                 </select>
+                <span className="absolute right-2 top-1.5 text-[9px] text-slate-500 pointer-events-none">▼</span>
               </div>
 
-              {/* Study Material / Document RAG selector */}
-              <div className="flex items-center gap-1.5 text-xs text-slate-400">
-                <span className="flex items-center gap-1">📎 Doc:</span>
+              {/* Document RAG Pill */}
+              <div className="relative">
                 <select
                   value={selectedDocId}
                   onChange={(e) => setSelectedDocId(e.target.value)}
-                  className={`rounded-lg border px-2.5 py-1.5 text-xs outline-none focus:border-blue-500 max-w-[170px] truncate ${
+                  className={`rounded-lg border pl-2.5 pr-6 py-1 text-xs outline-none transition cursor-pointer appearance-none max-w-[140px] truncate ${
                     selectedDocId
-                      ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-300 font-semibold"
-                      : "border-slate-700 bg-slate-900 text-slate-200"
+                      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                      : "border-white/10 bg-white/5 text-slate-400 hover:bg-white/10"
                   }`}
-                  title="Attach study document for RAG-grounded tutoring"
+                  title="Attach study material"
                 >
-                  <option value="">No Doc (General Tutor)</option>
+                  <option value="" className="bg-slate-900 text-white">No Document</option>
                   {documents.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.title} ({d.file_type.toUpperCase()})
+                    <option key={d.id} value={d.id} className="bg-slate-900 text-white">
+                      {d.title}
                     </option>
                   ))}
                 </select>
+                <span className="absolute right-2 top-1.5 text-[9px] text-slate-500 pointer-events-none">▼</span>
               </div>
 
-              {/* AI Key Status Button */}
-              <button
-                type="button"
-                onClick={() => setShowKeyModal(true)}
-                className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold transition border flex items-center gap-1.5 ${
-                  aiStatus.configured
-                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
-                    : "border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20"
-                }`}
-              >
-                <span>{aiStatus.configured ? "●" : "⚙️"}</span>
-                <span>{aiStatus.configured ? "Gemini Active" : "Connect AI Key"}</span>
-              </button>
-
-              {/* Voice Interaction Mode Toggle (Phase 8) */}
+              {/* Voice Mode Toggle */}
               <button
                 type="button"
                 onClick={() => {
@@ -724,267 +809,215 @@ function Tutor() {
                   if (isSpeaking) handleStopTTS();
                   if (isRecording) handleStopRecording();
                 }}
-                className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition border flex items-center gap-1.5 ${
+                className={`rounded-lg px-2.5 py-1 text-xs transition flex items-center gap-1 border cursor-pointer ${
                   isVoiceMode
-                    ? "border-emerald-500/50 bg-emerald-500/20 text-emerald-300 shadow-sm"
-                    : "border-slate-700 bg-slate-900 text-slate-400 hover:text-white"
+                    ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300 font-medium"
+                    : "border-white/10 bg-white/5 text-slate-400 hover:text-white hover:bg-white/10"
                 }`}
-                title="Toggle automatic speech-to-text and spoken AI responses"
+                title="Toggle voice responses"
               >
                 <span>🎙️</span>
-                <span>{isVoiceMode ? "Voice Mode: ON" : "Voice: OFF"}</span>
+                <span className="hidden sm:inline">{isVoiceMode ? "Voice On" : "Voice"}</span>
               </button>
             </div>
-          </div>
+          </header>
 
-          {/* Voice Mode Status Banner (Phase 8) */}
-          {isVoiceMode && (
-            <div className="mb-3 flex items-center justify-between rounded-xl border border-blue-500/30 bg-blue-500/10 px-3.5 py-2 text-xs text-blue-200">
-              <div className="flex items-center gap-2 truncate">
-                <span className="h-2 w-2 rounded-full bg-blue-400 animate-ping" />
-                <span className="truncate">
-                  <strong>🎙️ Multilingual Voice Mode Active</strong> · Language: <strong>{selectedLanguage}</strong>. Spoken responses will play automatically. Click 🎙️ below to speak.
-                </span>
+          {/* Active Voice Playback Banner */}
+          {isVoiceMode && isSpeaking && (
+            <div className="bg-blue-950/40 border-b border-blue-500/20 px-6 py-1.5 flex items-center justify-between text-xs text-blue-200">
+              <span className="flex items-center gap-2">
+                <span className="h-1.5 w-1.5 rounded-full bg-blue-400 animate-ping" />
+                Speaking explanation in {selectedLanguage}...
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (window.speechSynthesis.paused) {
+                      window.speechSynthesis.resume();
+                      setIsPaused(false);
+                    } else {
+                      window.speechSynthesis.pause();
+                      setIsPaused(true);
+                    }
+                  }}
+                  className="text-xs text-blue-300 hover:text-white underline cursor-pointer"
+                >
+                  {isPaused ? "Resume" : "Pause"}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleStopTTS}
+                  className="text-xs text-slate-400 hover:text-white cursor-pointer"
+                >
+                  Stop
+                </button>
               </div>
-              {isSpeaking && (
-                <div className="flex items-center gap-2 ml-3 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (window.speechSynthesis.paused) {
-                        window.speechSynthesis.resume();
-                        setIsPaused(false);
-                      } else {
-                        window.speechSynthesis.pause();
-                        setIsPaused(true);
-                      }
-                    }}
-                    className="rounded bg-blue-600 px-2.5 py-0.5 text-[11px] font-bold text-white hover:bg-blue-500 transition"
-                  >
-                    {isPaused ? "▶️ Resume" : "⏸️ Pause"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleStopTTS}
-                    className="rounded border border-blue-400/40 px-2 py-0.5 text-[11px] text-blue-300 hover:text-white transition"
-                  >
-                    ⏹️ Stop
-                  </button>
-                </div>
-              )}
             </div>
           )}
 
-          {/* Active RAG Grounding Indicator */}
-          {selectedDocId && (
-            <div className="mb-3 flex items-center justify-between rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3.5 py-2 text-xs text-emerald-300">
-              <div className="flex items-center gap-2 truncate">
-                <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-                <span className="truncate">
-                  RAG Grounding Active:{" "}
-                  <strong>
-                    {documents.find((d) => d.id === selectedDocId)?.title || "Attached Document"}
-                  </strong>{" "}
-                  · Tutor will reference and cite your uploaded study notes.
-                </span>
-              </div>
-              <button
-                onClick={() => setSelectedDocId("")}
-                className="ml-3 shrink-0 rounded px-2 py-0.5 text-[11px] font-semibold text-emerald-400 hover:bg-emerald-500/20"
-              >
-                Detach
-              </button>
-            </div>
-          )}
-
-          {/* Messages Area */}
-          <div className="flex-1 overflow-y-auto space-y-4 pr-2 py-2">
+          {/* Messages Stream OR Minimalist Gemini Empty State */}
+          <div className="flex-1 overflow-y-auto px-4 md:px-0 py-6 select-text">
             {loadingConvo ? (
-              <div className="py-20 text-center">
-                <LoadingSpinner size="md" text="Loading conversation..." />
+              <div className="flex items-center justify-center h-full text-center py-20">
+                <LoadingSpinner size="md" text="Loading chat..." />
               </div>
             ) : messages.length === 0 ? (
-              /* Empty State */
-              <div className="flex h-full flex-col items-center justify-center text-center p-6 max-w-lg mx-auto">
-                <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-blue-600/10 border border-blue-500/20 text-3xl mb-4 text-blue-400">
-                  ✦
+              /* Ultra Clean Gemini / ChatGPT Style Center Greeting */
+              <div className="flex flex-col items-center justify-center min-h-full w-full max-w-2xl mx-auto px-4 py-8 text-center">
+                {/* Clean Sparkle Glyph */}
+                <div className="w-12 h-12 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-2xl mb-4 text-sky-400">
+                  ✨
                 </div>
-                <h2 className="text-xl font-bold text-slate-200">How can I help you learn today?</h2>
+
+                <h2 className="text-2xl sm:text-3xl font-semibold text-white tracking-tight">
+                  What can I help you learn today?
+                </h2>
                 <p className="mt-2 text-sm text-slate-400">
-                  Ask me anything about programming, science, mathematics, or any other topic in {selectedLanguage}!
+                  Ask any concept, problem, or explanation in{" "}
+                  <span className="text-slate-300 font-medium">{selectedLanguage}</span>.
                 </p>
 
-                {/* Suggestions */}
-                <div className="mt-6 grid w-full gap-2 text-left">
-                  {SUGGESTED_PROMPTS.map((prompt, i) => (
+                {/* Clean, Compact 2x2 Starter Cards (Fits 100% on screen) */}
+                <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full text-left">
+                  {QUICK_STARTERS.map((item, idx) => (
                     <button
-                      key={i}
+                      key={idx}
+                      type="button"
                       onClick={() => {
-                        setInputMessage(prompt.text);
-                        setSelectedSubject(prompt.subject);
+                        setInputMessage(`${item.title}: ${item.subtitle}`);
+                        setSelectedSubject(item.subject);
+                        if (textareaRef.current) {
+                          textareaRef.current.focus();
+                        }
                       }}
-                      className="rounded-xl border border-slate-800 bg-slate-900/60 p-3 text-xs text-slate-300 transition hover:border-blue-500/40 hover:bg-slate-900 text-left"
+                      className="group rounded-xl border border-white/5 bg-white/[0.03] hover:bg-white/[0.06] hover:border-white/15 p-3.5 transition cursor-pointer"
                     >
-                      <span className="font-semibold text-blue-400 mr-2">[{prompt.subject}]</span>
-                      {prompt.text}
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-sm">{item.icon}</span>
+                        <span className="text-xs font-medium text-slate-200 group-hover:text-white">
+                          {item.title}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-400 line-clamp-1">
+                        {item.subtitle}
+                      </p>
                     </button>
                   ))}
                 </div>
               </div>
             ) : (
-              messages.map((msg, index) => (
-                <div
-                  key={msg.id || index}
-                  className={`flex flex-col ${
-                    msg.role === "user" ? "items-end" : "items-start"
-                  }`}
-                >
-                  <div className="flex items-center gap-2 mb-1 px-1">
-                    <span className="text-xs font-semibold text-slate-400">
-                      {msg.role === "user" ? (user?.name || "You") : "Mentora AI"}
-                    </span>
-                    <span className="text-[10px] text-slate-600">
-                      {msg.created_at ? new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ""}
-                    </span>
-                  </div>
-
+              /* Conversation Stream (ChatGPT Style) */
+              <div className="w-full max-w-3xl mx-auto space-y-6 pb-4">
+                {messages.map((msg, index) => (
                   <div
-                    className={`max-w-[85%] rounded-2xl px-5 py-3.5 text-sm ${
-                      msg.role === "user"
-                        ? "bg-blue-600 text-white rounded-tr-none shadow-md shadow-blue-600/10"
-                        : "border border-slate-800 bg-slate-900 text-slate-200 rounded-tl-none shadow-md"
-                    }`}
+                    key={msg.id || index}
+                    className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"}`}
                   >
-                    {renderFormattedText(msg.content)}
-
-                    {/* RAG Source Citations */}
-                    {msg.citations && msg.citations.length > 0 && (
-                      <div className="mt-3.5 pt-3 border-t border-slate-800/80">
-                        <p className="text-[11px] font-semibold text-emerald-400 mb-1.5 flex items-center gap-1.5">
-                          <span>📄</span> Grounded Source Citations ({msg.citations.length}):
-                        </p>
-                        <div className="space-y-1.5">
-                          {msg.citations.map((cite, ci) => (
-                            <div
-                              key={ci}
-                              className="rounded-lg bg-slate-950/70 border border-slate-800 p-2.5 text-xs text-slate-300"
-                            >
-                              <div className="flex items-center justify-between text-[11px] text-blue-400 font-semibold mb-1">
-                                <span>{cite.document_title} · {cite.page_or_slide_label || `Page ${cite.page_number}`}</span>
-                                <span className="text-[10px] text-emerald-400/90 font-mono">
-                                  Match: {Math.round(cite.score * 100)}%
-                                </span>
-                              </div>
-                              <p className="italic text-slate-400 line-clamp-2">
-                                "{cite.content_preview}"
-                              </p>
-                            </div>
-                          ))}
-                        </div>
+                    {/* User message */}
+                    {msg.role === "user" ? (
+                      <div className="max-w-[85%] rounded-2xl bg-[#1e293b] px-4 py-2.5 text-sm text-white shadow-sm">
+                        <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
                       </div>
-                    )}
+                    ) : (
+                      /* Assistant message */
+                      <div className="w-full text-slate-200 text-sm space-y-3">
+                        <div className="flex items-center gap-2 text-xs font-semibold text-slate-400">
+                          <span className="text-sky-400">✨</span>
+                          <span>Mentora AI</span>
+                        </div>
 
-                    {/* Audio Player Controls for AI Tutor Responses (Phase 8) */}
-                    {msg.role === "assistant" && (
-                      <div className="mt-3 pt-2.5 border-t border-slate-800/80 flex items-center justify-between flex-wrap gap-2">
-                        <div className="flex items-center gap-2">
+                        <div className="pl-0 leading-relaxed">
+                          {renderFormattedText(msg.content, msg.id || index)}
+                        </div>
+
+                        {/* Citations */}
+                        {msg.citations && msg.citations.length > 0 && (
+                          <div className="pt-2">
+                            <p className="text-[11px] font-semibold text-slate-400 mb-1.5">
+                              Sources cited:
+                            </p>
+                            <div className="flex flex-wrap gap-2">
+                              {msg.citations.map((cite, ci) => (
+                                <div
+                                  key={ci}
+                                  className="rounded-lg bg-white/5 border border-white/10 px-2.5 py-1 text-[11px] text-slate-300"
+                                >
+                                  📄 {cite.document_title} (Page {cite.page_number})
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Assistant Actions */}
+                        <div className="flex items-center gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => handleCopyText(`msg-${index}`, msg.content)}
+                            className="p-1 text-slate-400 hover:text-white transition cursor-pointer text-xs"
+                            title="Copy"
+                          >
+                            {copiedId === `msg-${index}` ? "✓ Copied" : "📋 Copy"}
+                          </button>
                           <button
                             type="button"
                             onClick={() => handleToggleSpeak(msg.id || `msg-${index}`, msg.content)}
-                            className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-semibold transition ${
-                              currentPlayingMsgId === (msg.id || `msg-${index}`)
-                                ? "bg-blue-600 text-white shadow-sm"
-                                : "bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white"
-                            }`}
-                            title="Listen to this explanation in selected language"
+                            className="p-1 text-slate-400 hover:text-white transition cursor-pointer text-xs"
+                            title="Listen"
                           >
-                            {currentPlayingMsgId === (msg.id || `msg-${index}`) ? (
-                              isPaused ? (
-                                <><span>▶️</span> Resume</>
-                              ) : (
-                                <><span>⏸️</span> Pause</>
-                              )
-                            ) : (
-                              <><span>🔊</span> Listen Aloud</>
-                            )}
+                            🔊 Listen
                           </button>
-
-                          {currentPlayingMsgId === (msg.id || `msg-${index}`) && (
-                            <button
-                              type="button"
-                              onClick={handleStopTTS}
-                              className="rounded-lg bg-slate-800 px-2 py-1 text-[11px] text-slate-400 hover:text-white"
-                              title="Stop audio"
-                            >
-                              ⏹️ Stop
-                            </button>
-                          )}
                         </div>
-
-                        {currentPlayingMsgId === (msg.id || `msg-${index}`) && !isPaused && (
-                          <div className="flex items-center gap-1.5 text-[11px] text-blue-400 font-mono">
-                            <span className="inline-block h-2 w-0.5 bg-blue-400 animate-pulse" />
-                            <span className="inline-block h-3 w-0.5 bg-blue-400 animate-pulse delay-75" />
-                            <span className="inline-block h-1.5 w-0.5 bg-blue-400 animate-pulse delay-150" />
-                            <span>Speaking ({selectedLanguage})...</span>
-                          </div>
-                        )}
                       </div>
                     )}
                   </div>
-                </div>
-              ))
-            )}
+                ))}
 
-            {loading && (
-              <div className="flex flex-col items-start">
-                <div className="flex items-center gap-2 mb-1 px-1">
-                  <span className="text-xs font-semibold text-blue-400">Mentora AI</span>
-                </div>
-                <div className="rounded-2xl rounded-tl-none border border-slate-800 bg-slate-900 px-5 py-4">
-                  <LoadingSpinner size="sm" text="Thinking and formulating explanation..." />
-                </div>
+                {/* Loading state */}
+                {loading && (
+                  <div className="flex items-center gap-2 text-slate-400 text-xs py-2">
+                    <span className="text-sky-400 animate-spin">✨</span>
+                    <span>Mentora AI is thinking...</span>
+                  </div>
+                )}
+
+                {/* Error */}
+                {error && (
+                  <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-xs text-red-300">
+                    {error}
+                  </div>
+                )}
+
+                <div ref={messagesEndRef} />
               </div>
             )}
-
-            {error && (
-              <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-300">
-                {error}
-              </div>
-            )}
-
-            <div ref={messagesEndRef} />
           </div>
 
-          {/* Input Box with Voice & Keyboard Support (Phase 8) */}
-          <form onSubmit={(e) => handleSend(e, isRecording ? "voice" : "text")} className="mt-4 pt-3 border-t border-slate-800">
-            {/* Live Recording Status Bar */}
+          {/* Floating ChatGPT / Gemini Style Prompt Console */}
+          <div className="w-full max-w-3xl mx-auto px-4 pb-4 pt-1 shrink-0">
+            {/* Live Recording notification */}
             {isRecording && (
-              <div className="mb-2 flex items-center justify-between rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-2 text-xs text-red-200">
-                <div className="flex items-center gap-2">
-                  <span className="h-2.5 w-2.5 rounded-full bg-red-500 animate-ping" />
-                  <span className="font-semibold text-red-300">Listening in {selectedLanguage}...</span>
-                  <span className="text-slate-400 text-[11px] hidden sm:inline">Speak clearly into microphone</span>
-                </div>
+              <div className="mb-2 flex items-center justify-between rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-xs text-red-200">
+                <span className="flex items-center gap-2">
+                  <span className="h-2 w-2 rounded-full bg-red-500 animate-ping" />
+                  Listening in {selectedLanguage}...
+                </span>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
                     onClick={() => {
                       handleStopRecording();
-                      if (inputMessage.trim()) {
-                        handleSend(null, "voice");
-                      }
+                      if (inputMessage.trim()) handleSend(null, "voice");
                     }}
-                    className="rounded-lg bg-red-600 px-3 py-1 text-[11px] font-bold text-white hover:bg-red-500 shadow transition"
+                    className="text-xs font-semibold text-red-300 hover:text-white underline cursor-pointer"
                   >
-                    Done &amp; Send →
+                    Done & Send
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      handleStopRecording();
-                    }}
-                    className="rounded-lg border border-red-500/30 px-2 py-1 text-[11px] text-red-300 hover:text-white transition"
+                    onClick={handleStopRecording}
+                    className="text-xs text-slate-400 hover:text-white cursor-pointer"
                   >
                     Cancel
                   </button>
@@ -992,137 +1025,133 @@ function Tutor() {
               </div>
             )}
 
-            {/* Voice Error Notice with Text Fallback */}
-            {voiceError && (
-              <div className="mb-2 flex items-center justify-between rounded-xl border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-300">
-                <div className="flex items-center gap-2">
-                  <span>⚠️</span>
-                  <span>{voiceError}</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setVoiceError(null)}
-                  className="text-amber-400 hover:text-white text-xs underline font-medium"
-                >
-                  Type Instead
-                </button>
-              </div>
-            )}
-
-            <div className="relative flex items-center gap-2">
-              {/* Microphone Speech-to-Text Button */}
-              <button
-                type="button"
-                onClick={isRecording ? handleStopRecording : handleStartRecording}
+            {/* Main Rounded Input Box */}
+            <form
+              onSubmit={(e) => handleSend(e, isRecording ? "voice" : "text")}
+              className="rounded-2xl border border-white/10 bg-[#161f30] px-4 py-3 shadow-xl focus-within:border-white/20 transition"
+            >
+              <textarea
+                ref={textareaRef}
+                rows={1}
+                value={inputMessage}
+                onChange={(e) => {
+                  setInputMessage(e.target.value);
+                  adjustTextareaHeight(e.target);
+                }}
+                onKeyDown={handleKeyDown}
+                placeholder={`Ask Mentora AI anything in ${selectedLanguage}... (Shift + Enter for new line)`}
                 disabled={loading}
-                className={`rounded-xl p-3 text-sm font-semibold transition flex items-center justify-center shrink-0 ${
-                  isRecording
-                    ? "bg-red-600 text-white animate-pulse shadow-lg shadow-red-500/30"
-                    : "border border-slate-700 bg-slate-900 text-slate-300 hover:bg-slate-800 hover:text-white hover:border-slate-600"
-                }`}
-                title={isRecording ? "Stop voice recording" : `Speak question in ${selectedLanguage}`}
-              >
-                {isRecording ? "⏹️ Stop" : "🎙️ Speak"}
-              </button>
+                className="w-full resize-none bg-transparent text-sm text-white placeholder-slate-500 outline-none leading-relaxed disabled:opacity-50"
+                style={{ minHeight: "28px", maxHeight: "160px" }}
+              />
 
-              <div className="relative flex-1">
-                <textarea
-                  rows={2}
-                  value={inputMessage}
-                  onChange={(e) => setInputMessage(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder={
-                    isRecording
-                      ? `Listening to your voice in ${selectedLanguage}...`
-                      : `Ask a question in ${selectedLanguage}... (Enter to send, or click 🎙️ Speak)`
-                  }
-                  disabled={loading}
-                  className="w-full resize-none rounded-xl border border-slate-700 bg-slate-950 p-3.5 pr-24 text-sm text-white placeholder-slate-500 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:opacity-60"
-                />
+              {/* Bottom Row Inside Box */}
+              <div className="mt-2 flex items-center justify-between gap-2 pt-1">
+                {/* Voice Input Button */}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={isRecording ? handleStopRecording : handleStartRecording}
+                    disabled={loading}
+                    className={`p-1.5 rounded-lg text-xs transition cursor-pointer ${
+                      isRecording
+                        ? "bg-red-500/20 text-red-300 animate-pulse"
+                        : "text-slate-400 hover:text-white hover:bg-white/5"
+                    }`}
+                    title="Voice input"
+                  >
+                    🎙️
+                  </button>
+                  {selectedDocId && (
+                    <span className="text-[10px] text-emerald-400">
+                      📄 Notes attached
+                    </span>
+                  )}
+                </div>
+
+                {/* Send Button */}
                 <button
                   type="submit"
                   disabled={loading || !inputMessage.trim()}
-                  className="absolute right-2.5 top-3.5 rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg bg-white text-slate-950 font-bold transition hover:bg-slate-200 active:scale-95 disabled:opacity-20 disabled:hover:bg-white cursor-pointer"
                 >
-                  {loading ? "Sending..." : "Send →"}
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 12h14M12 5l7 7-7 7" />
+                  </svg>
                 </button>
               </div>
-            </div>
-            <p className="mt-1.5 text-center text-[11px] text-slate-500">
-              Mentora AI Voice Tutor supports multilingual voice input &amp; speech synthesis. Verify important facts with primary textbooks.
+            </form>
+
+            <p className="mt-2 text-center text-[11px] text-slate-500">
+              Mentora AI can make mistakes. Verify critical academic facts.
             </p>
-          </form>
-        </section>
+          </div>
+        </main>
       </div>
 
-      {/* AI Key Modal */}
+      {/* API Key Modal */}
       {showKeyModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#161f30] p-6 shadow-2xl">
             <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2.5">
-                <span className="text-xl">✨</span>
-                <h2 className="text-lg font-bold text-white">Google Gemini API Setup</h2>
-              </div>
+              <h2 className="text-base font-bold text-white">Google Gemini API Setup</h2>
               <button
+                type="button"
                 onClick={() => setShowKeyModal(false)}
-                className="text-slate-400 hover:text-white text-lg p-1"
+                className="text-slate-400 hover:text-white text-sm"
               >
                 ✕
               </button>
             </div>
 
             <p className="text-xs text-slate-300 leading-relaxed mb-4">
-              Mentora AI uses <strong>Google Gemini 3.8 Flash</strong> for live multilingual tutoring and instant quiz generation.
+              Mentora AI uses <strong>Google Gemini</strong> for real-time tutoring and explanations.
             </p>
 
-            <div className="mb-4 rounded-xl border border-blue-500/20 bg-blue-500/10 p-3 text-xs text-blue-200">
-              <span>💡 Don't have a key? Get one free in 10 seconds at </span>
+            <div className="mb-4 rounded-xl border border-white/10 bg-white/5 p-3 text-xs text-slate-300">
+              <span>Free key available at </span>
               <a
                 href="https://aistudio.google.com/apikey"
                 target="_blank"
                 rel="noreferrer"
-                className="font-bold underline text-blue-300 hover:text-white"
+                className="font-semibold underline text-sky-400 hover:text-white"
               >
                 Google AI Studio →
               </a>
             </div>
 
             {keyModalError && (
-              <div className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 p-2.5 text-xs text-red-300">
+              <div className="mb-3 rounded-lg border border-red-500/20 bg-red-500/10 p-2.5 text-xs text-red-300">
                 {keyModalError}
               </div>
             )}
 
             {keyModalSuccess && (
-              <div className="mb-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-2.5 text-xs text-emerald-300">
+              <div className="mb-3 rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-2.5 text-xs text-emerald-300">
                 {keyModalSuccess}
               </div>
             )}
 
             <form onSubmit={handleSaveAPIKey} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-400 mb-1.5">
-                  Select Gemini Model
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  Model
                 </label>
                 <select
                   value={selectedModel}
                   onChange={(e) => setSelectedModel(e.target.value)}
                   disabled={savingKey}
-                  className="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 text-xs text-white outline-none focus:border-blue-500"
+                  className="w-full rounded-lg border border-white/10 bg-black/40 p-2.5 text-xs text-white outline-none focus:border-white/30"
                 >
                   <option value="gemini-3.8-flash">gemini-3.8-flash (Recommended)</option>
-                  <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite (Fast / High Capacity)</option>
+                  <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite (Fast)</option>
                   <option value="gemini-3.8-pro">gemini-3.8-pro (Deep Reasoning)</option>
                 </select>
-                <p className="mt-1 text-[11px] text-slate-500">
-                  If one model is temporarily busy (503), you can switch models here and retry.
-                </p>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-400 mb-1.5">
-                  Paste Gemini API Key
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  Gemini API Key
                 </label>
                 <input
                   type="password"
@@ -1130,33 +1159,31 @@ function Tutor() {
                   onChange={(e) => setApiKeyInput(e.target.value)}
                   placeholder="AIzaSy..."
                   disabled={savingKey}
-                  className="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 text-xs text-white outline-none focus:border-blue-500 font-mono"
+                  className="w-full rounded-lg border border-white/10 bg-black/40 p-2.5 text-xs text-white outline-none focus:border-white/30 font-mono"
                 />
               </div>
 
-              <div className="flex justify-end gap-2.5 pt-2">
+              <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
                   onClick={() => setShowKeyModal(false)}
                   disabled={savingKey}
-                  className="rounded-xl border border-slate-700 px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white"
+                  className="rounded-lg border border-white/10 px-3 py-2 text-xs text-slate-400 hover:text-white"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={savingKey || !apiKeyInput.trim()}
-                  className="rounded-xl bg-blue-600 px-5 py-2 text-xs font-semibold text-white shadow-lg shadow-blue-600/20 hover:bg-blue-500 disabled:opacity-50"
+                  className="rounded-lg bg-white text-slate-950 font-bold px-4 py-2 text-xs transition hover:bg-slate-200 disabled:opacity-50"
                 >
-                  {savingKey ? "Verifying with Google..." : "Verify & Activate Key"}
+                  {savingKey ? "Verifying..." : "Save Key"}
                 </button>
               </div>
             </form>
           </div>
         </div>
       )}
-
-      <Footer />
     </div>
   );
 }

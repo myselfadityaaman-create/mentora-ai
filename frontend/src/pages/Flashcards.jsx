@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useSearchParams, Link } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import {
   listFlashcards,
   getFlashcardStats,
@@ -7,7 +7,6 @@ import {
   createFlashcard,
   generateFlashcardsByTopic,
   generateFlashcardsFromDocument,
-  generateFlashcardsFromConversation,
   generateFlashcardsFromLearningPath,
   deleteFlashcard,
   listDocuments,
@@ -48,7 +47,6 @@ function Flashcards() {
   const [reviewing, setReviewing] = useState(false);
   const [studyTimer, setStudyTimer] = useState(0);
   const [sessionCompletedCount, setSessionCompletedCount] = useState(0);
-  const [lastReviewFeedback, setLastReviewFeedback] = useState(null);
 
   // Creation / Generator Modal State
   const [showGenModal, setShowGenModal] = useState(false);
@@ -65,7 +63,7 @@ function Flashcards() {
   const [manualAnswer, setManualAnswer] = useState("");
   const [manualTopic, setManualTopic] = useState("");
   const [manualSubject, setManualSubject] = useState("Computer Science");
-  const [manualDifficulty, setManualDifficulty] = useState("Intermediate");
+  const [manualDifficulty] = useState("Intermediate");
 
   // Auxiliary context items for generation
   const [documents, setDocuments] = useState([]);

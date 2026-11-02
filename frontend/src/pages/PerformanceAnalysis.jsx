@@ -13,7 +13,6 @@ export default function PerformanceAnalysis() {
   const [loading, setLoading] = useState(true);
   const [evaluating, setEvaluating] = useState(false);
   const [error, setError] = useState(null);
-  const [selectedTopic, setSelectedTopic] = useState(null);
 
   const fetchPerformance = useCallback(async () => {
     try {

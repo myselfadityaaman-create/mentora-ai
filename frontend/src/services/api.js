@@ -104,8 +104,16 @@ export async function loginUser(email, password) {
   return data;
 }
 
-export function getGoogleLoginUrl() {
-  return `${API_BASE_URL}/auth/google/login`;
+export function getGoogleLoginUrl(returnTo = "/login") {
+  return `${API_BASE_URL}/auth/google/login?return_to=${encodeURIComponent(returnTo)}`;
+}
+
+export function getGithubLoginUrl(returnTo = "/login") {
+  return `${API_BASE_URL}/auth/github/login?return_to=${encodeURIComponent(returnTo)}`;
+}
+
+export function getDevDemoLoginUrl(provider = "github", role = "student") {
+  return `${API_BASE_URL}/auth/dev-demo-login?provider=${encodeURIComponent(provider)}&role=${encodeURIComponent(role)}`;
 }
 
 export async function getCurrentUser() {

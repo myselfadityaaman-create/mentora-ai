@@ -4,7 +4,6 @@ import {
   joinClass,
   getStudentClassAssignments,
   submitAssignment,
-  getMySubmission,
 } from "../services/api";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
@@ -154,6 +153,12 @@ export default function StudentClasses() {
             <span>Join Class with Code</span>
           </button>
         </div>
+
+        {error && (
+          <div className="my-4 rounded-xl border border-red-500/30 bg-red-500/10 p-3.5 text-xs text-red-300">
+            {error}
+          </div>
+        )}
 
         {/* Selected Class View */}
         {selectedClass ? (

@@ -6,10 +6,8 @@ import json
 import time
 import uuid
 import secrets
-import string
 import logging
 from datetime import datetime, timezone, timedelta
-from contextlib import asynccontextmanager
 
 import jwt
 from jwt.exceptions import InvalidTokenError
@@ -53,6 +51,12 @@ GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
 GOOGLE_REDIRECT_URI = os.getenv(
     "GOOGLE_REDIRECT_URI",
     "http://localhost:8000/auth/google/callback",
+)
+GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID", "")
+GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET", "")
+GITHUB_REDIRECT_URI = os.getenv(
+    "GITHUB_REDIRECT_URI",
+    "http://localhost:8000/auth/github/callback",
 )
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
@@ -1482,12 +1486,12 @@ def get_user_role(current_user: dict = Depends(get_current_user)):
 # --------------------------------------------------
 
 @app.get("/auth/google/login")
-def google_login():
-    """Redirect the user to Google's OAuth consent screen."""
+def google_login(return_to: str = Query(default="/login")):
+    """Redirect the user to Google's OAuth consent screen or back to frontend if not configured."""
+    target_page = "/register" if "register" in (return_to or "").lower() else "/login"
     if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Google OAuth is not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in backend/.env",
+        return RedirectResponse(
+            url=f"{FRONTEND_URL}{target_page}?error=google_not_configured"
         )
 
     state = secrets.token_urlsafe(32)
@@ -1635,6 +1639,245 @@ async def google_callback(
             url=f"{FRONTEND_URL}/auth/callback?token={access_token}"
         )
 
+    except PyMongoError:
+        return RedirectResponse(
+            url=f"{FRONTEND_URL}/login?error=database_error"
+        )
+
+
+# --------------------------------------------------
+# GITHUB OAUTH
+# --------------------------------------------------
+
+@app.get("/auth/github/login")
+def github_login(return_to: str = Query(default="/login")):
+    """Redirect user to GitHub OAuth authorize screen, or back to frontend if not configured."""
+    target_page = "/register" if "register" in (return_to or "").lower() else "/login"
+    if not GITHUB_CLIENT_ID or not GITHUB_CLIENT_SECRET:
+        return RedirectResponse(
+            url=f"{FRONTEND_URL}{target_page}?error=github_not_configured"
+        )
+
+    state = secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc)
+    app.state.oauth_states = getattr(app.state, "oauth_states", {})
+    # Evict expired states older than 10 minutes (600 seconds)
+    app.state.oauth_states = {
+        s: t for s, t in app.state.oauth_states.items()
+        if (now - t).total_seconds() < 600
+    }
+    app.state.oauth_states[state] = now
+
+    params = {
+        "client_id": GITHUB_CLIENT_ID,
+        "redirect_uri": GITHUB_REDIRECT_URI,
+        "scope": "read:user user:email",
+        "state": state,
+    }
+    query_string = "&".join(f"{k}={v}" for k, v in params.items())
+    auth_url = f"https://github.com/login/oauth/authorize?{query_string}"
+    return RedirectResponse(url=auth_url)
+
+
+@app.get("/auth/github/callback")
+async def github_callback(
+    code: str = Query(default=None),
+    state: str = Query(default=None),
+    error: str = Query(default=None),
+):
+    """Handle the GitHub OAuth callback."""
+    if error:
+        return RedirectResponse(
+            url=f"{FRONTEND_URL}/login?error=github_auth_denied"
+        )
+
+    if not code or not state:
+        return RedirectResponse(
+            url=f"{FRONTEND_URL}/login?error=github_auth_failed"
+        )
+
+    # Validate state and evict expired states
+    now = datetime.now(timezone.utc)
+    oauth_states = getattr(app.state, "oauth_states", {})
+    app.state.oauth_states = {
+        s: t for s, t in oauth_states.items()
+        if (now - t).total_seconds() < 600
+    }
+    if state not in app.state.oauth_states:
+        return RedirectResponse(
+            url=f"{FRONTEND_URL}/login?error=invalid_state"
+        )
+    del app.state.oauth_states[state]
+
+    import httpx
+    try:
+        async with httpx.AsyncClient() as http_client:
+            token_resp = await http_client.post(
+                "https://github.com/login/oauth/access_token",
+                headers={"Accept": "application/json"},
+                data={
+                    "code": code,
+                    "client_id": GITHUB_CLIENT_ID,
+                    "client_secret": GITHUB_CLIENT_SECRET,
+                    "redirect_uri": GITHUB_REDIRECT_URI,
+                },
+            )
+            if token_resp.status_code != 200:
+                return RedirectResponse(
+                    url=f"{FRONTEND_URL}/login?error=github_token_failed"
+                )
+            token_data = token_resp.json()
+            access_token = token_data.get("access_token")
+            if not access_token:
+                return RedirectResponse(
+                    url=f"{FRONTEND_URL}/login?error=github_token_failed"
+                )
+
+            # Get user info from GitHub
+            gh_headers = {
+                "Authorization": f"Bearer {access_token}",
+                "User-Agent": "MentoraAI-Platform",
+                "Accept": "application/json",
+            }
+            userinfo_resp = await http_client.get(
+                "https://api.github.com/user",
+                headers=gh_headers,
+            )
+            if userinfo_resp.status_code != 200:
+                return RedirectResponse(
+                    url=f"{FRONTEND_URL}/login?error=github_userinfo_failed"
+                )
+            github_user = userinfo_resp.json()
+
+            github_email = (github_user.get("email") or "").lower().strip()
+            if not github_email:
+                emails_resp = await http_client.get(
+                    "https://api.github.com/user/emails",
+                    headers=gh_headers,
+                )
+                if emails_resp.status_code == 200:
+                    emails_list = emails_resp.json()
+                    if isinstance(emails_list, list):
+                        primary_email = next((e.get("email") for e in emails_list if e.get("primary") and e.get("verified")), None)
+                        if not primary_email:
+                            primary_email = next((e.get("email") for e in emails_list if e.get("verified")), None)
+                        if not primary_email and emails_list:
+                            primary_email = emails_list[0].get("email")
+                        if primary_email:
+                            github_email = str(primary_email).lower().strip()
+
+            if not github_email:
+                gh_login = github_user.get("login", "github_user")
+                github_email = f"{gh_login}@users.noreply.github.com".lower()
+
+    except Exception:
+        return RedirectResponse(
+            url=f"{FRONTEND_URL}/login?error=github_auth_failed"
+        )
+
+    github_name = github_user.get("name") or github_user.get("login") or github_email.split("@")[0]
+
+    # Find or create user
+    try:
+        existing_user = users_collection.find_one({"email": github_email})
+        if existing_user:
+            user_id = str(existing_user["_id"])
+            if existing_user.get("auth_provider") != "github":
+                users_collection.update_one(
+                    {"_id": existing_user["_id"]},
+                    {"$set": {"auth_provider": "github"}},
+                )
+        else:
+            doc = {
+                "name": github_name,
+                "email": github_email,
+                "role": "student",
+                "password_hash": None,
+                "preferred_language": "English",
+                "auth_provider": "github",
+                "created_at": datetime.now(timezone.utc),
+            }
+            result = users_collection.insert_one(doc)
+            user_id = str(result.inserted_id)
+            progress_collection.update_one(
+                {"user_id": user_id},
+                {"$setOnInsert": {
+                    "user_id": user_id,
+                    "total_conversations": 0,
+                    "total_messages": 0,
+                    "total_quizzes": 0,
+                    "total_quiz_score": 0,
+                    "subjects_studied": [],
+                    "created_at": datetime.now(timezone.utc),
+                    "updated_at": datetime.now(timezone.utc),
+                }},
+                upsert=True,
+            )
+
+        user_role = existing_user.get("role", "student") if existing_user else "student"
+        jwt_token = create_access_token(user_id=user_id, email=github_email, role=user_role)
+        return RedirectResponse(
+            url=f"{FRONTEND_URL}/auth/callback?token={jwt_token}"
+        )
+
+    except PyMongoError:
+        return RedirectResponse(
+            url=f"{FRONTEND_URL}/login?error=database_error"
+        )
+
+
+@app.get("/auth/dev-demo-login")
+def dev_demo_login(provider: str = Query(default="github"), role: str = Query(default="student")):
+    """Development shortcut to sign in with a simulated OAuth user for testing without OAuth keys."""
+    provider_clean = provider.lower().strip()
+    if provider_clean not in ("github", "google"):
+        provider_clean = "github"
+
+    demo_email = f"demo.{provider_clean}@mentora.ai"
+    demo_name = f"{provider_clean.title()} Student"
+    valid_role = role if role in ("student", "teacher", "admin") else "student"
+
+    try:
+        existing_user = users_collection.find_one({"email": demo_email})
+        if existing_user:
+            user_id = str(existing_user["_id"])
+            if existing_user.get("auth_provider") != provider_clean:
+                users_collection.update_one(
+                    {"_id": existing_user["_id"]},
+                    {"$set": {"auth_provider": provider_clean}},
+                )
+        else:
+            doc = {
+                "name": demo_name,
+                "email": demo_email,
+                "role": valid_role,
+                "password_hash": None,
+                "preferred_language": "English",
+                "auth_provider": provider_clean,
+                "created_at": datetime.now(timezone.utc),
+            }
+            result = users_collection.insert_one(doc)
+            user_id = str(result.inserted_id)
+            progress_collection.update_one(
+                {"user_id": user_id},
+                {"$setOnInsert": {
+                    "user_id": user_id,
+                    "total_conversations": 0,
+                    "total_messages": 0,
+                    "total_quizzes": 0,
+                    "total_quiz_score": 0,
+                    "subjects_studied": [],
+                    "created_at": datetime.now(timezone.utc),
+                    "updated_at": datetime.now(timezone.utc),
+                }},
+                upsert=True,
+            )
+
+        user_role = existing_user.get("role", valid_role) if existing_user else valid_role
+        jwt_token = create_access_token(user_id=user_id, email=demo_email, role=user_role)
+        return RedirectResponse(
+            url=f"{FRONTEND_URL}/auth/callback?token={jwt_token}"
+        )
     except PyMongoError:
         return RedirectResponse(
             url=f"{FRONTEND_URL}/login?error=database_error"
@@ -5748,7 +5991,6 @@ def _train_and_evaluate_ml_model(student_features: list[float]) -> dict:
     }
     cat_label, risk_level, confidence = category_map.get(pred_class, ("Evaluating", "Medium", 50.0))
 
-    # Readiness is probability of High Mastery + 0.5 * Competent
     readiness_pct = round(float(probs[2] * 100 + probs[1] * 50), 1) if len(probs) >= 3 else 50.0
     readiness_pct = min(100.0, max(5.0, readiness_pct))
 
@@ -5811,7 +6053,6 @@ def _build_student_performance_profile(user_id: str) -> dict:
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
 
-    # Aggregate topic statistics
     topic_data = {}
     total_q_count = 0
     total_correct_count = 0
@@ -5845,7 +6086,6 @@ def _build_student_performance_profile(user_id: str) -> dict:
 
         topic_entry["scores_history"].append(pct)
 
-        # Track missed concepts
         for idx, item in enumerate(questions):
             selected = answers[idx] if idx < len(answers) else None
             correct = item.get("correct_index", 0)
@@ -5856,7 +6096,6 @@ def _build_student_performance_profile(user_id: str) -> dict:
                     "topic": topic_name,
                 })
 
-    # Calculate mastery scores, trends, and tiers per topic
     topic_matrix = []
     strong_topics = []
     weak_topics = []
@@ -5870,7 +6109,6 @@ def _build_student_performance_profile(user_id: str) -> dict:
         scores = data["scores_history"]
         recent_acc = scores[-1] if scores else acc
 
-        # Trend calculation
         if len(scores) >= 2:
             prev_avg = sum(scores[:-1]) / len(scores[:-1])
             if recent_acc > prev_avg + 5:
@@ -5882,7 +6120,6 @@ def _build_student_performance_profile(user_id: str) -> dict:
         else:
             trend = "steady"
 
-        # Topic mastery score: weighted combination of accuracy + attempt confidence
         mastery = round(acc * 0.75 + min(data["attempts"] * 5, 25), 1)
         mastery = min(100.0, mastery)
 
@@ -5903,7 +6140,6 @@ def _build_student_performance_profile(user_id: str) -> dict:
         if trend == "declining" and t_name not in revision_needed:
             revision_needed.append(t_name)
 
-        # Collect unique knowledge gaps
         for missed in data["incorrect_items"][:2]:
             knowledge_gaps.append({
                 "topic": t_name,
@@ -5924,13 +6160,10 @@ def _build_student_performance_profile(user_id: str) -> dict:
             "tier": tier,
         })
 
-    # Sort matrix by lowest mastery first to highlight weaknesses immediately
     topic_matrix.sort(key=lambda x: x["mastery_score"])
 
-    # Overall student accuracy
     overall_acc = round((total_correct_count / total_q_count) * 100, 1) if total_q_count > 0 else 0.0
 
-    # Build actionable recommendations
     recommendations = []
     if weak_topics:
         worst = topic_matrix[0]
@@ -5949,7 +6182,6 @@ def _build_student_performance_profile(user_id: str) -> dict:
     if not recommendations:
         recommendations.append("Continue regular quiz assessments to refine topic mastery precision.")
 
-    # Calculate student feature vector for ML Model
     tot_attempts = float(len(quizzes))
     top_attempts = float(topic_matrix[0]["attempts"]) if topic_matrix else 1.0
     hist_acc_ratio = overall_acc / 100.0
@@ -5957,7 +6189,6 @@ def _build_student_performance_profile(user_id: str) -> dict:
     recent_acc_ratio = (topic_matrix[0]["recent_accuracy_percentage"] / 100.0) if topic_matrix else hist_acc_ratio
     momentum = recent_acc_ratio - hist_acc_ratio
 
-    # Learning path completion ratio
     tot_lp_lessons = sum(p.get("total_lessons", 0) for p in learning_paths)
     comp_lp_lessons = sum(p.get("completed_lessons", 0) for p in learning_paths)
     lp_ratio = (comp_lp_lessons / tot_lp_lessons) if tot_lp_lessons > 0 else 0.0
@@ -5991,7 +6222,6 @@ def _build_student_performance_profile(user_id: str) -> dict:
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
 
-    # Upsert in student_performance_collection
     student_performance_collection.update_one(
         {"user_id": user_id},
         {"$set": {"user_id": user_id, **profile}},
@@ -6036,10 +6266,6 @@ def get_topic_diagnostic(topic_name: str, current_user: dict = Depends(get_curre
     }
 
 
-# --------------------------------------------------
-# ADVANCED LEARNING ANALYTICS DASHBOARD (PHASE 6)
-# --------------------------------------------------
-
 @app.get("/analytics/dashboard")
 def get_dashboard_analytics(current_user: dict = Depends(get_current_user)):
     """
@@ -6059,7 +6285,6 @@ def get_dashboard_analytics(current_user: dict = Depends(get_current_user)):
     now = datetime.now(timezone.utc)
     today_date = now.date()
 
-    # 1. Fetch user data collections
     quizzes = list(quizzes_collection.find({"user_id": user_id}).sort("created_at", ASCENDING))
     completed_quizzes = [q for q in quizzes if q.get("completed")]
     learning_paths = list(learning_paths_collection.find({"user_id": user_id}))
@@ -6068,14 +6293,6 @@ def get_dashboard_analytics(current_user: dict = Depends(get_current_user)):
     conversations = list(conversations_collection.find({"user_id": user_id}))
     prog = progress_collection.find_one({"user_id": user_id}) or {}
 
-    def _as_utc(val):
-        if val is None:
-            return None
-        if isinstance(val, datetime):
-            return val.replace(tzinfo=timezone.utc) if val.tzinfo is None else val.astimezone(timezone.utc)
-        return None
-
-    # 2. Daily Activity Aggregation for past 30 days
     activity_by_date = {}
     for i in range(30):
         d = today_date - timedelta(days=29 - i)
@@ -6090,7 +6307,6 @@ def get_dashboard_analytics(current_user: dict = Depends(get_current_user)):
             "total": 0,
         }
 
-    # Aggregate Quizzes by date
     for q in quizzes:
         created = _as_utc(q.get("created_at"))
         if created:
@@ -6099,7 +6315,6 @@ def get_dashboard_analytics(current_user: dict = Depends(get_current_user)):
                 activity_by_date[c_date]["quizzes"] += 1
                 activity_by_date[c_date]["total"] += 1
 
-    # Aggregate Conversations / Messages
     for c in conversations:
         upd = _as_utc(c.get("updated_at") or c.get("created_at"))
         if upd:
@@ -6108,7 +6323,6 @@ def get_dashboard_analytics(current_user: dict = Depends(get_current_user)):
                 activity_by_date[c_date]["conversations"] += 1
                 activity_by_date[c_date]["total"] += 1
 
-    # Aggregate Flashcard Reviews
     for fr in flashcard_reviews:
         rev_dt = _as_utc(fr.get("reviewed_at"))
         if rev_dt:
@@ -6117,7 +6331,6 @@ def get_dashboard_analytics(current_user: dict = Depends(get_current_user)):
                 activity_by_date[r_date]["flashcards"] += 1
                 activity_by_date[r_date]["total"] += 1
 
-    # Aggregate Completed Lessons from Learning Paths
     for lp in learning_paths:
         for mod in lp.get("modules", []):
             for les in mod.get("lessons", []):
@@ -6136,10 +6349,8 @@ def get_dashboard_analytics(current_user: dict = Depends(get_current_user)):
                         activity_by_date[l_date]["lessons"] += 1
                         activity_by_date[l_date]["total"] += 1
 
-    # Weekly Activity (Last 7 Days)
     weekly_activity = [activity_by_date[(today_date - timedelta(days=6 - i)).isoformat()] for i in range(7)]
 
-    # Monthly Heatmap (Last 30 Days)
     monthly_activity = []
     for i in range(30):
         d_str = (today_date - timedelta(days=29 - i)).isoformat()
@@ -6153,7 +6364,6 @@ def get_dashboard_analytics(current_user: dict = Depends(get_current_user)):
             "level": level,
         })
 
-    # 3. Learning Streak Calculation
     streak = 0
     check_date = today_date
     today_str = check_date.isoformat()
@@ -6167,7 +6377,6 @@ def get_dashboard_analytics(current_user: dict = Depends(get_current_user)):
         else:
             break
 
-    # 4. Total Learning Time (Minutes)
     quiz_seconds = 0
     for q in completed_quizzes:
         ans_list = q.get("answered_questions") or []
@@ -6190,7 +6399,6 @@ def get_dashboard_analytics(current_user: dict = Depends(get_current_user)):
     mins = total_minutes % 60
     formatted_time = f"{hours}h {mins}m" if hours > 0 else f"{mins}m"
 
-    # 5. Subject-Wise Performance
     subject_map = {}
     for q in completed_quizzes:
         s = q.get("subject", "General")
@@ -6211,7 +6419,6 @@ def get_dashboard_analytics(current_user: dict = Depends(get_current_user)):
     ]
     subject_performance.sort(key=lambda x: x["average_score"], reverse=True)
 
-    # 6. Topic-Wise Mastery (From Performance Profile)
     perf_profile = _build_student_performance_profile(user_id)
     strong_topics = perf_profile.get("strong_topics", [])
     weak_topics = perf_profile.get("weak_topics", [])
@@ -6226,7 +6433,6 @@ def get_dashboard_analytics(current_user: dict = Depends(get_current_user)):
         else:
             tier_counts["Competent"] += 1
 
-    # 7. Historical Quiz Score Trends (Last 10 completed quizzes)
     quiz_trends = []
     for q in completed_quizzes[-10:]:
         q_date = _as_utc(q.get("created_at"))
@@ -6240,7 +6446,6 @@ def get_dashboard_analytics(current_user: dict = Depends(get_current_user)):
             "adaptive": bool(q.get("adaptive")),
         })
 
-    # 8. Learning Paths Progress
     total_paths = len(learning_paths)
     completed_paths = sum(1 for lp in learning_paths if lp.get("progress_percentage", 0) >= 100)
     in_progress_paths = [
@@ -6256,7 +6461,6 @@ def get_dashboard_analytics(current_user: dict = Depends(get_current_user)):
         for lp in learning_paths if lp.get("progress_percentage", 0) < 100
     ]
 
-    # 9. Revision Activity
     today_start = datetime(now.year, now.month, now.day, 0, 0, 0, tzinfo=timezone.utc)
     today_end = datetime(now.year, now.month, now.day, 23, 59, 59, 999999, tzinfo=timezone.utc)
 
@@ -6272,7 +6476,6 @@ def get_dashboard_analytics(current_user: dict = Depends(get_current_user)):
     good_easy_reviews = sum(1 for fr in flashcard_reviews if fr.get("rating") in ("good", "easy"))
     retention_rate = round((good_easy_reviews / len(flashcard_reviews)) * 100, 1) if flashcard_reviews else 100.0
 
-    # 10. Intelligent Prescriptive Recommendations
     if in_progress_paths:
         target_path = in_progress_paths[0]
         what_to_study = f"Continue your '{target_path['learning_goal']}' path in {target_path['subject']} ({target_path['progress_percentage']}% complete)."
@@ -6347,10 +6550,6 @@ def get_dashboard_analytics(current_user: dict = Depends(get_current_user)):
         },
     }
 
-
-# --------------------------------------------------
-# TEACHER PORTAL ENDPOINTS (RBAC: teacher, admin)
-# --------------------------------------------------
 
 @app.get("/teacher/dashboard")
 def get_teacher_dashboard(current_user: dict = Depends(require_roles("teacher", "admin"))):
@@ -6863,10 +7062,6 @@ def get_class_analytics(class_id: str, current_user: dict = Depends(require_role
     }
 
 
-# --------------------------------------------------
-# STUDENT CLASS & ASSIGNMENT INTERACTION ENDPOINTS
-# --------------------------------------------------
-
 @app.post("/classes/join")
 def join_class(req: JoinClassRequest, current_user: dict = Depends(get_current_user)):
     """Allow students to join a class using its unique 6-character code."""
@@ -7002,10 +7197,6 @@ def get_my_submission(assignment_id: str, current_user: dict = Depends(get_curre
     sub = submissions_collection.find_one({"assignment_id": assignment_id, "student_id": current_user["id"]})
     return {"submission": serialize_submission(sub) if sub else None}
 
-
-# --------------------------------------------------
-# ADMIN PORTAL ENDPOINTS (RBAC: admin)
-# --------------------------------------------------
 
 @app.get("/admin/dashboard")
 def get_admin_dashboard(current_user: dict = Depends(require_roles("admin"))):
@@ -7286,11 +7477,6 @@ def update_platform_settings(req: AdminUpdateSettingsRequest, current_user: dict
             "auto_grading_enabled": saved.get("auto_grading_enabled", True),
         },
     }
-
-
-# --------------------------------------------------
-# GAMIFICATION & REWARDS ENDPOINTS
-# --------------------------------------------------
 
 @app.get("/gamification/summary")
 def get_gamification_summary(current_user: dict = Depends(get_current_user)):

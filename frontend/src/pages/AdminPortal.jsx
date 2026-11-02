@@ -17,7 +17,6 @@ import LoadingSpinner from "../components/LoadingSpinner";
 export default function AdminPortal() {
   const { user: currentUser } = useAuth();
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState("overview"); // "overview" | "users" | "health" | "logs" | "settings"
 
   // Dashboard Data

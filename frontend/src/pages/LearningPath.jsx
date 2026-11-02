@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import {
   generateLearningPath,
   listLearningPaths,
@@ -34,8 +34,6 @@ const KNOWLEDGE_LEVELS = [
 const DAILY_TIME_OPTIONS = [30, 45, 60, 90, 120];
 
 export default function LearningPath() {
-  const navigate = useNavigate();
-
   // State
   const [roadmaps, setRoadmaps] = useState([]);
   const [activeRoadmap, setActiveRoadmap] = useState(null);

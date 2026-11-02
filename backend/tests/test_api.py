@@ -31,7 +31,10 @@ test_client = TestClient(app)
 def setup_test_db():
     yield
     # Cleanup test database after all tests complete
-    client.drop_database("mentora_ai_test")
+    try:
+        client.drop_database("mentora_ai_test")
+    except Exception:
+        pass
 
 
 def test_health():
@@ -888,15 +891,41 @@ def test_oauth_state_validation_and_expiration():
     from datetime import datetime, timezone, timedelta
     from main import app
 
-    # Invalid state rejected
+    # Unconfigured redirects to frontend with clear error code
+    import main as app_module
+    old_gh_id = app_module.GITHUB_CLIENT_ID
+    old_google_id = app_module.GOOGLE_CLIENT_ID
+    try:
+        app_module.GITHUB_CLIENT_ID = ""
+        resp_gh_login = test_client.get("/auth/github/login", follow_redirects=False)
+        assert resp_gh_login.status_code in (302, 307)
+        assert "error=github_not_configured" in resp_gh_login.headers["location"]
+
+        app_module.GOOGLE_CLIENT_ID = ""
+        resp_google_login = test_client.get("/auth/google/login", follow_redirects=False)
+        assert resp_google_login.status_code in (302, 307)
+        assert "error=google_not_configured" in resp_google_login.headers["location"]
+    finally:
+        app_module.GITHUB_CLIENT_ID = old_gh_id
+        app_module.GOOGLE_CLIENT_ID = old_google_id
+
+    # Invalid state rejected (Google & GitHub)
     resp = test_client.get("/auth/google/callback?code=fake_code&state=non_existent_state", follow_redirects=False)
     assert resp.status_code in (302, 307)
     assert "error=invalid_state" in resp.headers["location"]
 
-    # Missing params rejected
+    resp_gh = test_client.get("/auth/github/callback?code=fake_code&state=non_existent_state", follow_redirects=False)
+    assert resp_gh.status_code in (302, 307)
+    assert "error=invalid_state" in resp_gh.headers["location"]
+
+    # Missing params rejected (Google & GitHub)
     resp_no_params = test_client.get("/auth/google/callback", follow_redirects=False)
     assert resp_no_params.status_code in (302, 307)
     assert "error=google_auth_failed" in resp_no_params.headers["location"]
+
+    resp_gh_no_params = test_client.get("/auth/github/callback", follow_redirects=False)
+    assert resp_gh_no_params.status_code in (302, 307)
+    assert "error=github_auth_failed" in resp_gh_no_params.headers["location"]
 
     # Expired state (> 10 minutes) evicted
     old_state = "expired_test_state_12345"
@@ -907,6 +936,13 @@ def test_oauth_state_validation_and_expiration():
     resp_expired = test_client.get(f"/auth/google/callback?code=fake_code&state={old_state}", follow_redirects=False)
     assert resp_expired.status_code in (302, 307)
     assert "error=invalid_state" in resp_expired.headers["location"]
+    assert old_state not in app.state.oauth_states
+
+    # Expired state for GitHub callback
+    app.state.oauth_states[old_state] = datetime.now(timezone.utc) - timedelta(minutes=15)
+    resp_gh_expired = test_client.get(f"/auth/github/callback?code=fake_code&state={old_state}", follow_redirects=False)
+    assert resp_gh_expired.status_code in (302, 307)
+    assert "error=invalid_state" in resp_gh_expired.headers["location"]
     assert old_state not in app.state.oauth_states
 
 
